@@ -1,5 +1,6 @@
 import os
 from typing import BinaryIO
+import regex as re
 
 def find_chunk_boundaries(
     file: BinaryIO,
@@ -40,13 +41,22 @@ def find_chunk_boundaries(
     return sorted(set(chunk_boundaries))
             
 
-def pretokenization(
+def pretokenize(
     chunk: str,
-    desired_num_chunks: int,
+    frequency_table: dict[tuple[bytes, ...], int],
     special_tokens: list[str]
-) -> dict[bytes, int]:
-    return None
+) -> None:
     
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    
+    special_pattern = "|".join(re.escape(token) for token in special_tokens)
+    parts = re.split(special_pattern, chunk)
+
+    for part in parts:
+        for match in re.finditer(PAT, part):
+            token = match.group().encode("utf-8")
+            token_tuple = tuple(bytes([b]) for b in token)
+            frequency_table[token_tuple] = frequency_table.get(token_tuple, 0) + 1   
 
 
 def train_bpe(
@@ -55,7 +65,23 @@ def train_bpe(
     special_tokens: list[str]
 ) -> dict[dict[int, bytes], list[tuple[bytes, bytes]]]:
     with open(input_path, "rb") as f:
+        num_processes = 4
         special_tokens_bytes = [s.encode("utf-8") for s in special_tokens]
+        boundaries = find_chunk_boundaries(f, num_processes, special_tokens_bytes)
+        frequency_table = {}
+
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            f.seek(start)
+            chunk = f.read(end - start).decode("utf-8", errors="ignore")
+            pretokenize(chunk, frequency_table, special_tokens)
+        
+        
+
           
     
     return None
+
+
+if __name__ == "__main__":
+    special_tokens = ["<|endoftext|>"]
+    train_bpe("data/TinyStoriesV2-GPT4-valid.txt", 10000, special_tokens)
