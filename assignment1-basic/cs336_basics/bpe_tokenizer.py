@@ -43,7 +43,7 @@ def find_chunk_boundaries(
 
 def pretokenize(
     chunk: str,
-    frequency_table: dict[tuple[bytes, ...], int],
+    frequency_table: dict[tuple[int, ...], int],
     special_tokens: list[str]
 ) -> None:
     
@@ -55,15 +55,41 @@ def pretokenize(
     for part in parts:
         for match in re.finditer(PAT, part):
             token = match.group().encode("utf-8")
-            token_tuple = tuple(bytes([b]) for b in token)
+            token_tuple = tuple(int(b) for b in token)
             frequency_table[token_tuple] = frequency_table.get(token_tuple, 0) + 1   
 
+def bpe_merge(
+    vocab: dict[int, bytes],
+    merges: list[tuple[bytes, bytes]],
+    frequency_table: dict[tuple[int, ...], int],
+    vocab_size: int
+) -> None:
+    if len(vocab) >= vocab_size:
+        return
+    token_pair_table = {}
+
+    for word, frequency in frequency_table.items():
+        for first, second in zip(word[:-1], word[1:]):
+            token_pair_table[(first, second)] = token_pair_table.get((first, second), 0) + frequency
+    
+    bpe_merge_helper(vocab, merges, frequency_table, vocab_size, token_pair_table)
+
+    
+def bpe_merge_helper(
+    vocab: dict[int, bytes],
+    merges: list[tuple[bytes, bytes]],
+    frequency_table: dict[tuple[int, ...], int],
+    vocab_size: int,
+    token_pair_table: dict[tuple[int, int], int]
+) -> None:
+    
+    
 
 def train_bpe(
     input_path: str,
     vocab_size: int,
     special_tokens: list[str]
-) -> dict[dict[int, bytes], list[tuple[bytes, bytes]]]:
+) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     with open(input_path, "rb") as f:
         num_processes = 4
         special_tokens_bytes = [s.encode("utf-8") for s in special_tokens]
@@ -75,8 +101,11 @@ def train_bpe(
             chunk = f.read(end - start).decode("utf-8", errors="ignore")
             pretokenize(chunk, frequency_table, special_tokens)
         
-        
-
+        vocab = {}
+        for t in range(256):
+            vocab[t] = bytes([t])
+        for i in range(len(special_tokens)):
+            vocab[i + 256] = special_tokens[i].encode("utf-8")
           
     
     return None
