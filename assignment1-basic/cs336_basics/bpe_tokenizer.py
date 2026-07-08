@@ -82,7 +82,26 @@ def bpe_merge_helper(
     vocab_size: int,
     token_pair_table: dict[tuple[int, int], int]
 ) -> None:
+    max_pair_first, max_pair_second = max(token_pair_table, key=lambda x: x[1])
+    token_pair_table.pop((max_pair_first, max_pair_second))
+    new_vocab_bytes = vocab[max_pair_first] + vocab[max_pair_second]
+    merges.append((vocab[max_pair_first], vocab[max_pair_second]))
+    vocab[len(vocab)] = new_vocab_bytes
+
+    if len(vocab) >= vocab_size:
+        return
     
+    for word, frequency in frequency_table.items():
+        for i in range(len(word) - 1):
+            if (word[i] == max_pair_first and word[i + 1] == max_pair_second):
+                if i > 0:
+                    token_pair_table[(word[i - 1], max_pair_first)] -= frequency
+                    token_pair_table[(word[i - 1], len(vocab))] = token_pair_table.get((word[i - 1], len(vocab)), 0) + frequency
+                if i < len(word) - 2:
+                    token_pair_table[(max_pair_second, word[i + 2])] -= frequency
+                    token_pair_table[(len(vocab), word[i + 2])] = token_pair_table.get((len(vocab), word[i + 2]), 0) + frequency
+    
+    bpe_merge_helper(vocab, merges, frequency_table, vocab_size, token_pair_table)
     
 
 def train_bpe(
