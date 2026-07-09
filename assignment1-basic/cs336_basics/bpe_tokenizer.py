@@ -1,6 +1,7 @@
 import os
 from typing import BinaryIO
 import regex as re
+from collections import defaultdict, Counter
 
 def find_chunk_boundaries(
     file: BinaryIO,
@@ -46,83 +47,96 @@ def pretokenize(
     frequency_table: dict[tuple[int, ...], int],
     special_tokens: list[str]
 ) -> None:
-    
     PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    
-    special_pattern = "|".join(re.escape(token) for token in special_tokens)
-    parts = re.split(special_pattern, chunk)
+
+    if special_tokens:
+        special_pattern = "|".join(re.escape(token) for token in special_tokens)
+        parts = re.split(special_pattern, chunk)
+    else:
+        parts = [chunk]
 
     for part in parts:
         for match in re.finditer(PAT, part):
             token = match.group().encode("utf-8")
-            token_tuple = tuple(int(b) for b in token)
-            frequency_table[token_tuple] = frequency_table.get(token_tuple, 0) + 1   
+            token_tuple = tuple(token)
+            frequency_table[token_tuple] = frequency_table.get(token_tuple, 0) + 1
+
+
+def get_pair_counter(word: tuple[int, ...]) -> Counter[tuple[int, int]]:
+    return Counter(zip(word[:-1], word[1:]))
+
+
+def merge_word(word: tuple[int, ...], pair: tuple[int, int], new_id: int) -> tuple[int, ...]:
+    out = []
+    i = 0
+    while i < len(word):
+        if i < len(word) - 1 and word[i] == pair[0] and word[i + 1] == pair[1]:
+            out.append(new_id)
+            i += 2
+        else:
+            out.append(word[i])
+            i += 1
+    return tuple(out)
+
 
 def bpe_merge(
     vocab: dict[int, bytes],
     merges: list[tuple[bytes, bytes]],
     frequency_table: dict[tuple[int, ...], int],
-    vocab_size: int
+    vocab_size: int,
 ) -> None:
-    if len(vocab) >= vocab_size:
-        return
-    token_pair_table = {}
+    pair_counts = defaultdict(int)
+    pair_to_words = defaultdict(set)
 
-    for word, frequency in frequency_table.items():
-        for first, second in zip(word[:-1], word[1:]):
-            token_pair_table[(first, second)] = token_pair_table.get((first, second), 0) + frequency
-    
-    while len(vocab) < vocab_size and token_pair_table:
-        max_pair = min(token_pair_table, key=lambda pair: (-token_pair_table[pair], pair))
-        max_pair_first, max_pair_second = max_pair
+    for word, freq in frequency_table.items():
+        pair_counter = get_pair_counter(word)
+        for pair, count in pair_counter.items():
+            pair_counts[pair] += count * freq
+            pair_to_words[pair].add(word)
 
-        new_vocab_bytes = vocab[max_pair_first] + vocab[max_pair_second]
-        new_token_id = len(vocab)
-        vocab[new_token_id] = new_vocab_bytes
-        merges.append((vocab[max_pair_first], vocab[max_pair_second]))
+    while len(vocab) < vocab_size and pair_counts:
+        best_pair = max(
+            pair_counts,
+            key=lambda pair: (
+                pair_counts[pair],
+                vocab[pair[0]],
+                vocab[pair[1]],
+            ),
+        )
 
-        del token_pair_table[max_pair]
+        new_id = len(vocab)
+        first, second = best_pair
+        vocab[new_id] = vocab[first] + vocab[second]
+        merges.append((vocab[first], vocab[second]))
 
-        new_frequency_table = {}
+        affected_words = list(pair_to_words[best_pair])
 
-        for word, freq in frequency_table.items():
-            new_word = []
-            i = 0
+        for old_word in affected_words:
+            if old_word not in frequency_table:
+                continue
 
-            while i < len(word):
-                if i < len(word) - 1 and word[i] == max_pair_first and word[i + 1] == max_pair_second:
-                    if len(new_word) > 0:
-                        old_left_pair = (new_word[-1], max_pair_first)
-                        token_pair_table[old_left_pair] = token_pair_table.get(old_left_pair, 0) - freq
-                        if token_pair_table[old_left_pair] <= 0:
-                            del token_pair_table[old_left_pair]
-                    
-                    if i + 2 < len(word):
-                        old_right_pair = (max_pair_second, word[i + 2])
-                        token_pair_table[old_right_pair] = token_pair_table.get(old_right_pair, 0) - freq
-                        if token_pair_table[old_right_pair] <= 0:
-                            del token_pair_table[old_right_pair]
+            freq = frequency_table.pop(old_word)
 
-                    new_word.append(new_token_id)
+            old_pair_counter = get_pair_counter(old_word)
 
-                    if len(new_word) > 1:
-                        new_left_pair = (new_word[-2], new_token_id)
-                        token_pair_table[new_left_pair] = token_pair_table.get(new_left_pair, 0) + freq
-                    
-                    if i + 2 < len(word):
-                        new_right_pair = (new_token_id, word[i + 2])
-                        token_pair_table[new_right_pair] = token_pair_table.get(new_right_pair, 0) + freq
-                    
-                    i += 2
-                else:
-                    new_word.append(word[i])
-                    i += 1
-           
-            new_word_tuple = tuple(new_word)
-            new_frequency_table[new_word_tuple] = new_frequency_table.get(new_word_tuple, 0) + freq
-        
-        frequency_table.clear()
-        frequency_table.update(new_frequency_table)
+            for pair, count in old_pair_counter.items():
+                pair_counts[pair] -= count * freq
+                pair_to_words[pair].discard(old_word)
+
+                if pair_counts[pair] == 0:
+                    del pair_counts[pair]
+                    del pair_to_words[pair]
+
+            new_word = merge_word(old_word, best_pair, new_id)
+
+            old_existing_freq = frequency_table.get(new_word, 0)
+            frequency_table[new_word] = old_existing_freq + freq
+
+            new_pair_counter = get_pair_counter(new_word)
+
+            for pair, count in new_pair_counter.items():
+                pair_counts[pair] += count * freq
+                pair_to_words[pair].add(new_word)
             
 
 def train_bpe(
