@@ -3,6 +3,8 @@ import pickle
 from typing import BinaryIO, Iterable, Iterator
 import regex as re
 from collections import defaultdict, Counter
+from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterable, Iterator
 
 def find_chunk_boundaries(
     file: BinaryIO,
@@ -185,7 +187,8 @@ class Tokenizer:
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
         self.vocab = vocab
         self.merges = merges
-        self.special_tokens = special_tokens
+        self.special_tokens = sorted(special_tokens, key=len, reverse=True) if special_tokens else None
+        self.token_to_id = {tk: id for id, tk in self.vocab.items()}
 
     @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
@@ -199,69 +202,74 @@ class Tokenizer:
 
     def encode(self, text: str) -> list[int]:
         PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        regex = re.compile(PAT)
 
         if self.special_tokens:
-            special_pattern = "|".join(f"({re.escape(token)})" for token in self.special_tokens)
-            combined_pattern = f"{special_pattern}|({PAT})"
+            special_pattern = "(" + "|".join(
+                re.escape(token) for token in self.special_tokens
+            ) + ")"
+            parts = re.split(special_pattern, text)
         else:
-            combined_pattern = PAT
-
-        regex = re.compile(combined_pattern)
+            parts = [text]
 
         output = []
         cached_encode_pretoken = {}
 
-        for match in regex.finditer(combined_pattern, text):
-            token_text = match.group(0)
-            if token_text:
-                token = token_text.encode(encoding="utf-8")
-                token_tuple = tuple(token)
+        for part in parts:
+            
+            if part is None:
+                continue
 
-                if token_tuple in cached_encode_pretoken: 
-                    output.extend(cached_encode_pretoken[token_tuple])
-                else:
-                    token_tuple_list = list(token_tuple)
-                    for merge in self.merges:
-                        first, second = merge
-                        merged_index = []
+            if self.special_tokens and part in self.special_tokens:
+                output.append(self.token_to_id[part.encode("utf-8")])
+                continue
 
-                        for i in range(0, len(token_tuple_list) - 1):
-                            if token_tuple_list[i] == first and token_tuple_list[i + 1] == second:
-                                merged_index.append(i)
+            for match in regex.finditer(part):
+                token_text = match.group(0)
+                if token_text:
+                    token = token_text.encode(encoding="utf-8")
+                    token_tuple = tuple(bytes([b]) for b in token)
 
-                        for index in merged_index:
-                            token_tuple_list[index] = token_tuple_list[index] + token_tuple_list[index + 1]
-                            token_tuple_list.pop(index + 1)
+                    if token_tuple in cached_encode_pretoken: 
+                        output.extend(cached_encode_pretoken[token_tuple])
+                    else:
+                        token_tuple_list = list(token_tuple)
+                        for merge in self.merges:
+                            first, second = merge
+                            merged_index = []
 
-                    token_int_list = []
-                    for t in token_tuple_list:
-                        token_int_list.append(next(id for id, tk in self.vocab.items() if tk == t))
-                    cached_encode_pretoken[token_tuple] = token_int_list
-                    output.extend(token_int_list)
+                            for i in range(0, len(token_tuple_list) - 1):
+                                if token_tuple_list[i] == first and token_tuple_list[i + 1] == second:
+                                    merged_index.append(i)
+
+                            for index in reversed(merged_index):
+                                token_tuple_list[index] = token_tuple_list[index] + token_tuple_list[index + 1]
+                                token_tuple_list.pop(index + 1)
+
+                        token_int_list = []
+                        for t in token_tuple_list:
+                            token_int_list.append(self.token_to_id[t])
+                        cached_encode_pretoken[token_tuple] = token_int_list
+                        output.extend(token_int_list)
 
         return output
 
-    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
-        """
-        Lazily encode multiple texts, yielding token IDs one at a time.
-        Memory efficient for large datasets.
-        """
-        for text in iterable:
-            # Encode each text and yield tokens one by one
-            for token_id in self.encode(text):
-                yield token_id
+    def encode_iterable(
+        self,
+        iterable: Iterable[str],
+        num_workers: int = 20,
+    ) -> Iterator[int]:
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            for token_ids in executor.map(self.encode, iterable):
+                yield from token_ids
         
 
     def decode(self, ids: list[int]) -> str:
 
-        from io import StringIO
+        from io import BytesIO
 
-        buffer = StringIO()
+        buffer = BytesIO()
         for id in ids:
-            token_bytes = self.vocab.get(id, None)
-            if token_bytes:
-                buffer.write(token_bytes.decode("utf-8"))
-            else:
-                buffer.write('\ufffd')
-        return buffer.getvalue()
+            buffer.write(self.vocab.get(id, None))
+        return buffer.getvalue().decode("utf-8", errors="replace")
         
