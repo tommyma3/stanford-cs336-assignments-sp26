@@ -1,5 +1,6 @@
 import os
-from typing import BinaryIO
+import pickle
+from typing import BinaryIO, Iterable, Iterator
 import regex as re
 from collections import defaultdict, Counter
 
@@ -169,6 +170,98 @@ def train_bpe(
     return None
 
 
-if __name__ == "__main__":
-    special_tokens = ["<|endoftext|>"]
-    train_bpe("data/TinyStoriesV2-GPT4-valid.txt", 10000, special_tokens)
+
+def _load_pickle_object(file_path):
+    try:
+        with open(file_path, "rb") as file:
+            return pickle.load(file)
+    except Exception as e:
+        print(f"Unexcpted error when loading pickle objects: {e}")
+
+
+
+
+class Tokenizer:
+    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens
+
+    @classmethod
+    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+        vocab = _load_pickle_object(vocab_filepath)
+        merges = _load_pickle_object(merges_filepath)
+
+        if not isinstance(vocab, dict) or not isinstance(merges, list):
+            raise TypeError("Check vocab and merges type")
+
+        return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
+
+    def encode(self, text: str) -> list[int]:
+        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+
+        if self.special_tokens:
+            special_pattern = "|".join(f"({re.escape(token)})" for token in self.special_tokens)
+            combined_pattern = f"{special_pattern}|({PAT})"
+        else:
+            combined_pattern = PAT
+
+        regex = re.compile(combined_pattern)
+
+        output = []
+        cached_encode_pretoken = {}
+
+        for match in regex.finditer(combined_pattern, text):
+            token_text = match.group(0)
+            if token_text:
+                token = token_text.encode(encoding="utf-8")
+                token_tuple = tuple(token)
+
+                if token_tuple in cached_encode_pretoken: 
+                    output.extend(cached_encode_pretoken[token_tuple])
+                else:
+                    token_tuple_list = list(token_tuple)
+                    for merge in self.merges:
+                        first, second = merge
+                        merged_index = []
+
+                        for i in range(0, len(token_tuple_list) - 1):
+                            if token_tuple_list[i] == first and token_tuple_list[i + 1] == second:
+                                merged_index.append(i)
+
+                        for index in merged_index:
+                            token_tuple_list[index] = token_tuple_list[index] + token_tuple_list[index + 1]
+                            token_tuple_list.pop(index + 1)
+
+                    token_int_list = []
+                    for t in token_tuple_list:
+                        token_int_list.append(next(id for id, tk in self.vocab.items() if tk == t))
+                    cached_encode_pretoken[token_tuple] = token_int_list
+                    output.extend(token_int_list)
+
+        return output
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        """
+        Lazily encode multiple texts, yielding token IDs one at a time.
+        Memory efficient for large datasets.
+        """
+        for text in iterable:
+            # Encode each text and yield tokens one by one
+            for token_id in self.encode(text):
+                yield token_id
+        
+
+    def decode(self, ids: list[int]) -> str:
+
+        from io import StringIO
+
+        buffer = StringIO()
+        for id in ids:
+            token_bytes = self.vocab.get(id, None)
+            if token_bytes:
+                buffer.write(token_bytes.decode("utf-8"))
+            else:
+                buffer.write('\ufffd')
+        return buffer.getvalue()
+        
