@@ -98,3 +98,41 @@ class SwiGLU(nn.Module):
         result *= einsum(self.w3, x, "d_ff d_model, ... d_model -> ... d_ff")
         result = einsum(self.w2, result, "d_model d_ff, ... d_ff -> ... d_model")
         return result
+
+
+class RotaryPositionalEmbedding(nn.Module):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+        super().__init__()
+        self.theta = theta
+        self.d_k = d_k
+        self.max_seq_len = max_seq_len
+        sins = torch.empty(max_seq_len, d_k // 2, device=device)
+        coss = torch.empty(max_seq_len, d_k // 2, device=device)
+
+        for i in range(max_seq_len):
+            for k in range(d_k // 2):
+                angle = i / (theta ** (2 * k / d_k))
+                coss[i][k] = math.cos(angle)
+                sins[i][k] = math.sin(angle)
+        
+        self.register_buffer("sins", sins, persistent=False)
+        self.register_buffer("coss", coss, persistent=False)
+
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+        coss_sliced = self.coss[token_positions]
+        sins_sliced = self.sins[token_positions]
+
+        cos = self.coss[token_positions]
+        sin = self.sins[token_positions]
+
+        x_even = x[..., ::2]
+        x_odd = x[..., 1::2]
+
+        out = torch.empty_like(x)
+
+        out[..., ::2] = x_even * cos - x_odd * sin
+        out[..., 1::2] = x_even * sin + x_odd * cos
+
+        return out
+
+        
