@@ -90,6 +90,9 @@ class SwiGLU(nn.Module):
         self.w1 = nn.Parameter(torch.empty(d_feedforward, d_model, device=device, dtype=dtype))
         self.w3 = nn.Parameter(torch.empty(d_feedforward, d_model, device=device, dtype=dtype))
         self.w2 = nn.Parameter(torch.empty(d_model, d_feedforward, device=device, dtype=dtype))
+        nn.init.trunc_normal_(self.w1)
+        nn.init.trunc_normal_(self.w2)
+        nn.init.trunc_normal_(self.w3)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         result = einsum(self.w1, x, "d_ff d_model, ... d_model -> ... d_ff")
@@ -161,3 +164,55 @@ def scaled_dot_product_attention(
 
     scaled_dot_product = softmax(scaled_dot_product, dim=-1)
     return einsum(scaled_dot_product, value, "... s1 s2, ... s2 d_v -> ... s1 d_v")
+
+
+
+class MultiHeadSelfAttention(nn.Module):
+    def __init__(
+            self, 
+            d_model: int, 
+            num_heads: int, 
+            d_key: int | None = None,
+            d_value: int | None = None,
+            enable_position_embedding: bool = True,
+            rope_theta: int = 10000, 
+            max_seq_len: int = 2048,
+            device=None,
+            dtype=None
+            ):
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_key = d_model // num_heads if d_key is None else d_key
+        self.d_value = d_model // num_heads if d_value is None else d_value
+        self.enable_position_embedding = enable_position_embedding
+
+        assert self.d_key == self.d_value
+
+        self.qkv_proj = nn.Parameter(torch.empty(2 * self.num_heads * self.d_key + self.num_heads * self.d_value, self.d_model, device=device, dtype=dtype))
+        self.out_proj = nn.Parameter(torch.empty(self.d_model, self.num_heads * self.d_value, device=device, dtype=dtype))
+        self.position_embedding = RotaryPositionalEmbedding(rope_theta, d_k=self.d_key, max_seq_len=max_seq_len, device=device) if enable_position_embedding else None
+        nn.init.trunc_normal_(self.qkv_proj)
+        nn.init.trunc_normal_(self.out_proj)
+
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
+        batch_size, seq_len, _ = x.shape
+        qkv = einsum(self.qkv_proj, x, "three_hd_k d_model, b seq d_model -> b seq three_hd_k")
+        qkv = rearrange(qkv, "b seq (channel h d_k) -> channel b h seq d_k", channel=3, h=self.num_heads)
+
+        if self.enable_position_embedding:
+            if token_positions is None:
+                token_positions = torch.arange(seq_len, device=x.device).broadcast_to((batch_size, self.num_heads, seq_len))
+            Q = self.position_embedding(qkv[0], token_positions)
+            K = self.position_embedding(qkv[1], token_positions)
+        else:
+            Q = qkv[0]
+            K = qkv[1]
+        V = qkv[2] 
+        
+        mask = torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool, device=x.device))
+        attn = scaled_dot_product_attention(K, Q, V, mask) # (batch, head, seq_len, d_v)
+        attn = rearrange(attn, "b h seq d_v -> b seq (h d_v)")
+        return einsum(self.out_proj, attn, "d_model hd_v, b seq hd_v -> b seq d_model")
+    
+        
