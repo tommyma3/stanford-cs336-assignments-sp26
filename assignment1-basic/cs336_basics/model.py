@@ -247,4 +247,10 @@ class TransformerBlock(nn.Module):
         self.ffn = SwiGLU(self.d_model, self.d_ff, device=device, dtype=dtype)
         self.ln1 = RMSNorm(self.d_model, device=device)
         self.ln2 = RMSNorm(self.d_model, device=device)
-        
+
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None):
+        norm1 = self.ln1(x)
+        attention_out = self.attn(norm1, token_positions) + x
+        norm2 = self.ln2(attention_out)
+        out = self.ffn(norm2) + attention_out
+        return out
