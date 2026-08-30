@@ -33,7 +33,7 @@ class Linear(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return einsum(x, self.weight, "... in, out in -> ... out")
+        return einsum(x, self.weight, "... i, o i -> ... o")
 
 
 class Embedding(nn.Module):
@@ -87,20 +87,15 @@ class SwiGLU(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.d_feedforward = round(d_model / 24) * 64 if d_feedforward is None else d_feedforward
-        self.w1 = nn.Parameter(torch.empty(d_feedforward, d_model, device=device, dtype=dtype))
-        self.w3 = nn.Parameter(torch.empty(d_feedforward, d_model, device=device, dtype=dtype))
-        self.w2 = nn.Parameter(torch.empty(d_model, d_feedforward, device=device, dtype=dtype))
-        nn.init.trunc_normal_(self.w1)
-        nn.init.trunc_normal_(self.w2)
-        nn.init.trunc_normal_(self.w3)
+        self.w1 = Linear(d_model, d_feedforward, device=device, dtype=dtype)
+        self.w3 = Linear(d_model, d_feedforward, device=device, dtype=dtype)
+        self.w2 = Linear(d_feedforward, d_model, device=device, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        result = einsum(self.w1, x, "d_ff d_model, ... d_model -> ... d_ff")
-        print(result.shape)
+        result = self.w1(x)
         result *= torch.sigmoid(result)
-        result *= einsum(self.w3, x, "d_ff d_model, ... d_model -> ... d_ff")
-        result = einsum(self.w2, result, "d_model d_ff, ... d_ff -> ... d_model")
-        return result
+        result *= self.w3(x)
+        return self.w2(result)
 
 
 class RotaryPositionalEmbedding(nn.Module):
@@ -189,30 +184,67 @@ class MultiHeadSelfAttention(nn.Module):
 
         assert self.d_key == self.d_value
 
-        self.qkv_proj = nn.Parameter(torch.empty(2 * self.num_heads * self.d_key + self.num_heads * self.d_value, self.d_model, device=device, dtype=dtype))
-        self.out_proj = nn.Parameter(torch.empty(self.d_model, self.num_heads * self.d_value, device=device, dtype=dtype))
+        self.q_proj = Linear(self.d_model, self.d_model, device=device, dtype=dtype)
+        self.k_proj = Linear(self.d_model, self.d_model, device=device, dtype=dtype)
+        self.v_proj = Linear(self.d_model, self.d_model, device=device, dtype=dtype)
+
+        self.output_proj = Linear(self.d_model, self.d_model, device=device, dtype=dtype)
         self.position_embedding = RotaryPositionalEmbedding(rope_theta, d_k=self.d_key, max_seq_len=max_seq_len, device=device) if enable_position_embedding else None
-        nn.init.trunc_normal_(self.qkv_proj)
-        nn.init.trunc_normal_(self.out_proj)
+
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
-        qkv = einsum(self.qkv_proj, x, "three_hd_k d_model, b seq d_model -> b seq three_hd_k")
-        qkv = rearrange(qkv, "b seq (channel h d_k) -> channel b h seq d_k", channel=3, h=self.num_heads)
+        Q = self.q_proj(x)
+        K = self.k_proj(x)
+        V = self.v_proj(x)
+        Q = rearrange(
+            Q,
+            "b seq (h d) -> b h seq d",
+            h=self.num_heads,
+        )
+        K = rearrange(
+            K,
+            "b seq (h d) -> b h seq d",
+            h=self.num_heads,
+        )
+        V = rearrange(
+            V,
+            "b seq (h d) -> b h seq d",
+            h=self.num_heads,
+        )
 
         if self.enable_position_embedding:
             if token_positions is None:
                 token_positions = torch.arange(seq_len, device=x.device).broadcast_to((batch_size, self.num_heads, seq_len))
-            Q = self.position_embedding(qkv[0], token_positions)
-            K = self.position_embedding(qkv[1], token_positions)
-        else:
-            Q = qkv[0]
-            K = qkv[1]
-        V = qkv[2] 
+            Q = self.position_embedding(Q, token_positions)
+            K = self.position_embedding(K, token_positions)
+
         
         mask = torch.tril(torch.ones(seq_len, seq_len, dtype=torch.bool, device=x.device))
         attn = scaled_dot_product_attention(K, Q, V, mask) # (batch, head, seq_len, d_v)
         attn = rearrange(attn, "b h seq d_v -> b seq (h d_v)")
-        return einsum(self.out_proj, attn, "d_model hd_v, b seq hd_v -> b seq d_model")
+        return self.output_proj(attn)
     
+        
+class TransformerBlock(nn.Module):
+    def __init__(
+            self, 
+            d_model: int, 
+            num_heads: int, 
+            d_ff: int, 
+            theta: int = 10000, 
+            max_seq_len: int = 2048, 
+
+            device=None, 
+            dtype=None
+            ):
+        super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+
+        self.attn = MultiHeadSelfAttention(self.d_model, self.num_heads, rope_theta=theta, max_seq_len=max_seq_len, device=device, dtype=dtype)
+        self.ffn = SwiGLU(self.d_model, self.d_ff, device=device, dtype=dtype)
+        self.ln1 = RMSNorm(self.d_model, device=device)
+        self.ln2 = RMSNorm(self.d_model, device=device)
         

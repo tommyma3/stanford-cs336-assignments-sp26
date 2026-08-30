@@ -94,7 +94,7 @@ def run_swiglu(
     # You can also manually assign the weights
     from cs336_basics.model import SwiGLU
     swiglu = SwiGLU(d_model=d_model, d_feedforward=d_ff)
-    swiglu.load_state_dict({"w1": w1_weight, "w2": w2_weight, "w3": w3_weight})
+    swiglu.load_state_dict({"w1.weight": w1_weight, "w2.weight": w2_weight, "w3.weight": w3_weight})
     return swiglu(in_features)
 
 
@@ -155,7 +155,7 @@ def run_multihead_self_attention(
     from einops import rearrange
     attention = MultiHeadSelfAttention(d_model=d_model, num_heads=num_heads, enable_position_embedding=False)
     qkv_proj = rearrange([q_proj_weight, k_proj_weight, v_proj_weight], "channel hd_k d_m -> (channel hd_k) d_m")
-    attention.load_state_dict({"qkv_proj": qkv_proj, "out_proj": o_proj_weight})
+    attention.load_state_dict({"q_proj.weight": q_proj_weight, "v_proj.weight": v_proj_weight, "k_proj.weight": k_proj_weight, "output_proj.weight": o_proj_weight})
     return attention(in_features)
 
 
@@ -200,7 +200,7 @@ def run_multihead_self_attention_with_rope(
     from einops import rearrange
     attention = MultiHeadSelfAttention(d_model=d_model, num_heads=num_heads, rope_theta=theta, max_seq_len=max_seq_len)
     qkv_proj = rearrange([q_proj_weight, k_proj_weight, v_proj_weight], "channel hd_k d_m -> (channel hd_k) d_m")
-    attention.load_state_dict({"qkv_proj": qkv_proj, "out_proj": o_proj_weight})
+    attention.load_state_dict({"q_proj.weight": q_proj_weight, "v_proj.weight": v_proj_weight, "k_proj.weight": k_proj_weight, "output_proj.weight": o_proj_weight})
     return attention(in_features, token_positions)
 
 
@@ -421,7 +421,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return in_features * torch.sigmoid(in_features)
 
 
 def run_get_batch(
