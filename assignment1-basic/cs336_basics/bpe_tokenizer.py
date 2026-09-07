@@ -97,6 +97,10 @@ def bpe_merge(
             pair_counts[pair] += count * freq
             pair_to_words[pair].add(word)
 
+    from tqdm import tqdm
+
+    pbar = tqdm(total=vocab_size - len(vocab), desc="BPE merges")
+
     while len(vocab) < vocab_size and pair_counts:
         best_pair = max(
             pair_counts,
@@ -140,6 +144,8 @@ def bpe_merge(
             for pair, count in new_pair_counter.items():
                 pair_counts[pair] += count * freq
                 pair_to_words[pair].add(new_word)
+        pbar.update(1)
+    pbar.close()
             
 
 def train_bpe(
