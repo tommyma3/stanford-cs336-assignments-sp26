@@ -43,18 +43,32 @@ def gradient_clipping(
 
 
 def load_data(
-        dataset: npt.NDArray,
-        batch_size: int,
-        context_length: int,
-        device: str = 'cpu'
+    dataset: np.memmap,
+    batch_size: int,
+    context_length: int,
+    device: str = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    num_possible_starting_indices = len(dataset) - context_length
-    idx = np.random.randint(0, num_possible_starting_indices, size=(batch_size, 1)) + np.arange(context_length + 1)
-    data_np = dataset[idx]
-    data = torch.from_numpy(data_np[:, :context_length]).to(device)
-    target = torch.from_numpy(data_np[:, 1:]).to(device)
-    return data, target
 
+    starts = np.random.randint(
+        0,
+        len(dataset) - context_length,
+        size=batch_size,
+    )
+
+    data_np = np.stack([
+        dataset[i:i + context_length + 1]
+        for i in starts
+    ])
+
+    # Usually token IDs need torch.long
+    data_np = data_np.astype(np.int64)
+
+    data = torch.from_numpy(data_np)
+
+    x = data[:, :-1].to(device)
+    y = data[:, 1:].to(device)
+
+    return x, y
 
 def save_checkpoint(
         model: torch.nn.Module,
