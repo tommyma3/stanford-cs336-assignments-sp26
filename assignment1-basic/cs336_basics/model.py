@@ -87,9 +87,9 @@ class SwiGLU(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.d_feedforward = round(d_model / 24) * 64 if d_feedforward is None else d_feedforward
-        self.w1 = Linear(d_model, d_feedforward, device=device, dtype=dtype)
-        self.w3 = Linear(d_model, d_feedforward, device=device, dtype=dtype)
-        self.w2 = Linear(d_feedforward, d_model, device=device, dtype=dtype)
+        self.w1 = Linear(d_model, self.d_feedforward, device=device, dtype=dtype)
+        self.w3 = Linear(d_model, self.d_feedforward, device=device, dtype=dtype)
+        self.w2 = Linear(self.d_feedforward, d_model, device=device, dtype=dtype)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         result = self.w1(x)
@@ -280,8 +280,8 @@ class TransformerLM(nn.Module):
 
         self.token_embeddings = Embedding(vocab_size, d_model, device=device, dtype=dtype)
         self.layers = nn.ModuleList([TransformerBlock(d_model=self.d_model, num_heads=self.num_heads, d_ff=self.d_ff, theta=rope_theta, max_seq_len=self.context_length, device=device, dtype=dtype) for i in range(self.num_layers)])
-        self.ln_final = RMSNorm(d_model=self.d_model)
-        self.lm_head = Linear(d_model, vocab_size)
+        self.ln_final = RMSNorm(d_model=self.d_model, device=device, dtype=dtype)
+        self.lm_head = Linear(d_model, vocab_size, device=device, dtype=dtype)
 
     def forward(self, in_indices: torch.Tensor):
         embd = self.token_embeddings(in_indices)
