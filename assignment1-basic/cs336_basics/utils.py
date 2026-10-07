@@ -61,7 +61,7 @@ def load_data(
     ])
 
     # Usually token IDs need torch.long
-    data_np = data_np.astype(np.int64)
+    data_np = data_np.astype(np.int32)
 
     data = torch.from_numpy(data_np)
 

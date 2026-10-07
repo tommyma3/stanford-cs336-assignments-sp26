@@ -1,26 +1,26 @@
 model:
-  context_length: 4096
-  d_model: 256
+  context_length: 256
+  d_model: 512
   num_layers: 4
-  num_heads: 4
-  d_feedforward: null
+  num_heads: 16
+  d_feedforward: 1344
   device: cuda
   dtype: bfloat16
 
 optimizer:
   name: AdamW
   beta1: 0.9
-  beta2: 0.999
+  beta2: 0.95
   eps: 1e-8
   weight_decay: 0.01
 
 data:
-  train: data/owt_train.txt
-  eval: data/owt_valid.txt
+  train: data/TinyStories-train.txt
+  eval: data/TinyStoriesV2-GPT4-valid.txt
 
 tokenizer:
-  vocab_filepath: artifacts/owt_tokenizer/vocab.pkl
-  merges_filepath: artifacts/owt_tokenizer/merges.pkl
+  vocab_filepath: artifacts/tinystories_tokenizer/vocab.pkl
+  merges_filepath: artifacts/tinystories_tokenizer/merges.pkl
   special_tokens:
     - "<|endoftext|>"
   

@@ -277,6 +277,7 @@ class TransformerLM(nn.Module):
         self.num_layers = num_layers
         self.num_heads = num_heads
         self.d_ff =d_ff
+        self.device = device
 
         self.token_embeddings = Embedding(vocab_size, d_model, device=device, dtype=dtype)
         self.layers = nn.ModuleList([TransformerBlock(d_model=self.d_model, num_heads=self.num_heads, d_ff=self.d_ff, theta=rope_theta, max_seq_len=self.context_length, device=device, dtype=dtype) for i in range(self.num_layers)])

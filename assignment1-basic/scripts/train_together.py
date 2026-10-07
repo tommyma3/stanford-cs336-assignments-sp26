@@ -1,8 +1,8 @@
 import yaml
 import os
 from cs336_basics.bpe_tokenizer import Tokenizer
-from cs336_basics.utils import load_data, gradient_clipping, get_lr_cosine_schedule, save_checkpoint, load_checkpoint
-from cs336_basics.model import TransformerLM, softmax
+from cs336_basics.utils import load_data, gradient_clipping, get_lr_cosine_schedule, save_checkpoint
+from cs336_basics.model import TransformerLM
 from cs336_basics.optimizer import AdamW
 from cs336_basics.loss import cross_entropy
 import torch
@@ -37,6 +37,7 @@ def main():
     dtype = config["model"]["dtype"]
 
     model = TransformerLM(vocab_size, context_length, d_model, num_layers, num_heads, d_feedforward, device=device, dtype=dtype)
+    model = torch.compile(model)
 
     # 3. Training loop
     iterations = config["training"]["iterations"]
