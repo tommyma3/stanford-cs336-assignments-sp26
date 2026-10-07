@@ -25,7 +25,11 @@ def main():
     eval_dataset = tokenizer.encode(eval_data_string)
     batch_size = config["training"]["batch_size"]
     context_length = config["model"]["context_length"]
-    device = config["model"]["device"]
+    device_name = config["model"]["device"]
+    if device_name.startswith("cuda") and ":" not in device_name:
+        device_name = "cuda" if device_name == "cuda" else f"cuda:{device_name[4:]}"
+    device = torch.device(device_name)
+    dtype = getattr(torch, config["model"]["dtype"])
 
     # 2. Model initialization
     vocab_size = len(tokenizer.vocab)
@@ -34,15 +38,14 @@ def main():
     num_layers = config["model"]["num_layers"]
     num_heads = config["model"]["num_heads"]
     d_feedforward = config["model"]["d_feedforward"]
-    dtype = config["model"]["dtype"]
 
     model = TransformerLM(vocab_size, context_length, d_model, num_layers, num_heads, d_feedforward, device=device, dtype=dtype)
     model = torch.compile(model)
 
     # 3. Training loop
     iterations = config["training"]["iterations"]
-    min_lr = config["training"]["min_lr"]
-    max_lr = config["training"]["max_lr"]
+    min_lr = float(config["training"]["min_lr"])
+    max_lr = float(config["training"]["max_lr"])
     warmup_iters = config["training"]["warmup_iters"]
     cosine_cycle_iters = config["training"]["cosine_cycle_iters"]
     checkpoint_interval = config["training"]["checkpoint_interval"]
@@ -51,7 +54,7 @@ def main():
     ckpt_dir = config["training"]["ckpt_dir"]
     lr = 0.0
     betas = (config["optimizer"]["beta1"], config["optimizer"]["beta2"])
-    eps = config["optimizer"]["eps"]
+    eps = float(config["optimizer"]["eps"])
     weight_decay = config["optimizer"]["weight_decay"]
     max_l2_norm = config["training"]["max_l2_norm"]
 

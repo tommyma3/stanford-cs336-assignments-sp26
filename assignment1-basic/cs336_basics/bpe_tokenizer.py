@@ -195,6 +195,7 @@ class Tokenizer:
         self.merges = merges
         self.special_tokens = sorted(special_tokens, key=len, reverse=True) if special_tokens else None
         self.token_to_id = {tk: id for id, tk in self.vocab.items()}
+        self._merge_rank = {pair: rank for rank, pair in enumerate(merges)}
 
     @classmethod
     def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
@@ -236,21 +237,45 @@ class Tokenizer:
                     token = token_text.encode(encoding="utf-8")
                     token_tuple = tuple(bytes([b]) for b in token)
 
-                    if token_tuple in cached_encode_pretoken: 
+                    if token_tuple in cached_encode_pretoken:
                         output.extend(cached_encode_pretoken[token_tuple])
                     else:
+                        # Apply BPE: repeatedly merge the lowest-rank adjacent
+                        # pair present, which is exactly equivalent to applying
+                        # the merge rules in their training order.
                         token_tuple_list = list(token_tuple)
-                        for merge in self.merges:
-                            first, second = merge
-                            merged_index = []
+                        while len(token_tuple_list) > 1:
+                            best_rank = None
+                            best_index = -1
+                            for i in range(len(token_tuple_list) - 1):
+                                rank = self._merge_rank.get(
+                                    (token_tuple_list[i], token_tuple_list[i + 1])
+                                )
+                                if rank is not None and (
+                                    best_rank is None or rank < best_rank
+                                ):
+                                    best_rank = rank
+                                    best_index = i
+                            if best_index == -1:
+                                break
 
-                            for i in range(0, len(token_tuple_list) - 1):
-                                if token_tuple_list[i] == first and token_tuple_list[i + 1] == second:
-                                    merged_index.append(i)
-
-                            for index in reversed(merged_index):
-                                token_tuple_list[index] = token_tuple_list[index] + token_tuple_list[index + 1]
-                                token_tuple_list.pop(index + 1)
+                            first = token_tuple_list[best_index]
+                            second = token_tuple_list[best_index + 1]
+                            merged = first + second
+                            new_list = []
+                            i = 0
+                            while i < len(token_tuple_list):
+                                if (
+                                    i + 1 < len(token_tuple_list)
+                                    and token_tuple_list[i] == first
+                                    and token_tuple_list[i + 1] == second
+                                ):
+                                    new_list.append(merged)
+                                    i += 2
+                                else:
+                                    new_list.append(token_tuple_list[i])
+                                    i += 1
+                            token_tuple_list = new_list
 
                         token_int_list = []
                         for t in token_tuple_list:

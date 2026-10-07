@@ -4,7 +4,7 @@ model:
   num_layers: 4
   num_heads: 16
   d_feedforward: 1344
-  device: cuda
+  device: cuda:7
   dtype: bfloat16
 
 optimizer:
