@@ -66,7 +66,7 @@ def decode(
             if next_token == eos_token_id:
                 break
 
-        return buf[0, len(prompt):current_len].tolist()
+        return buf[0, :current_len].tolist()
 
 
 def inference(
@@ -109,4 +109,4 @@ if __name__ == "__main__":
     load_checkpoint("artifacts/train/iter49999.pt", model, optimizer)
 
     completion = inference(model, tokenizer, prompt)
-    print(prompt, completion)
+    print(completion)
