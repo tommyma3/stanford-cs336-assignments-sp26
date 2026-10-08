@@ -1,6 +1,6 @@
 [project]
-name = "cs336_basics"
-version = "26.0.0"
+name = "cs336-basics"
+version = "26.0.4"
 description = "CS336 Assignment 1"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -19,7 +19,6 @@ dependencies = [
     "wandb>=0.25",
     "ty>=0.0.26",
     "ruff>=0.15.8",
-    "resource>=0.2.1",
 ]
 
 [build-system]
