@@ -2,7 +2,10 @@ import torch
 import numpy as np
 from cs336_basics.model import TransformerLM, softmax
 from cs336_basics.bpe_tokenizer import Tokenizer
+from cs336_basics.optimizer import AdamW
+from cs336_basics.utils import load_checkpoint
 import warnings
+import yaml
 
 def _get_eos_token_id(
         tokenizer: Tokenizer,
@@ -34,7 +37,7 @@ def decode(
     num_new_tokens = 0
     eos_token_id = _get_eos_token_id(tokenizer=tokenizer)
 
-    prompt_tensor = torch.from_numpy(np.asarray(prompt, dtype=torch.int32)).unsqueeze(0).to(model.device)
+    prompt_tensor = torch.from_numpy(np.asarray(prompt, dtype=np.int32)).unsqueeze(0).to(model.device)
     current_len = len(prompt)
     buf = torch.full((1, current_len + max_generated_tokens), eos_token_id, dtype=torch.int32, device=model.device)
     buf[:, :current_len] = prompt_tensor
@@ -63,7 +66,7 @@ def decode(
             if next_token == eos_token_id:
                 break
 
-        return buf[0, :current_len].tolist()
+        return buf[0, len(prompt):current_len].tolist()
 
 
 def inference(
@@ -81,5 +84,29 @@ def inference(
 
 
 if __name__ == "__main__":
-    prompt = "Once upon a time, "
-    
+    prompt = "Once upon a time"
+    with open("configs/train.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+    tokenizer = Tokenizer.from_files(config["tokenizer"]["vocab_filepath"], config["tokenizer"]["merges_filepath"], config["tokenizer"]["special_tokens"])
+    vocab_size = len(tokenizer.vocab)
+    context_length = config["model"]["context_length"]
+    d_model = config["model"]["d_model"]
+    num_layers = config["model"]["num_layers"]
+    num_heads = config["model"]["num_heads"]
+    d_feedforward = config["model"]["d_feedforward"]
+    lr = 0.0
+    betas = (config["optimizer"]["beta1"], config["optimizer"]["beta2"])
+    eps = float(config["optimizer"]["eps"])
+    weight_decay = config["optimizer"]["weight_decay"]
+    max_l2_norm = config["training"]["max_l2_norm"]
+
+    device = torch.device(config["model"]["device"])
+    dtype = getattr(torch, config["model"]["dtype"])
+
+    model = TransformerLM(vocab_size, context_length, d_model, num_layers, num_heads, d_feedforward, device=device, dtype=dtype)
+    optimizer = AdamW(model.parameters(), lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+    load_checkpoint("artifacts/train/iter49999.pt", model, optimizer)
+
+    completion = inference(model, tokenizer, prompt)
+    print(prompt, completion)

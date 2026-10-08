@@ -40,7 +40,7 @@ def main():
     d_feedforward = config["model"]["d_feedforward"]
 
     model = TransformerLM(vocab_size, context_length, d_model, num_layers, num_heads, d_feedforward, device=device, dtype=dtype)
-    model = torch.compile(model)
+    # model = torch.compile(model)
 
     # 3. Training loop
     iterations = config["training"]["iterations"]
